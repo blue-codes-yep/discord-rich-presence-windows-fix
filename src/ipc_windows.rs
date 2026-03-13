@@ -1,14 +1,11 @@
 use crate::{discord_ipc::DiscordIpc, error::Error};
 use serde_json::json;
 use std::{
-    fs::{OpenOptions},
+    fs::OpenOptions,
     io::{Read, Write},
     os::windows::fs::OpenOptionsExt,
-    os::windows::io::AsRawHandle,
     path::PathBuf,
 };
-use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
-use windows_sys::Win32::System::Pipes::DisconnectNamedPipe;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -41,8 +38,8 @@ impl DiscordIpc for DiscordIpcClient {
     fn connect_ipc(&mut self) -> Result<()> {
         for i in 0..10 {
             let path = PathBuf::from(format!(r"\\?\pipe\discord-ipc-{}", i));
-
-            match OpenOptions::new().access_mode(0x3).open(&path) {
+            // Use GENERIC_READ | GENERIC_WRITE (0xC0000000) not 0x3
+            match OpenOptions::new().access_mode(0xC000_0000).open(&path) {
                 Ok(handle) => {
                     self.socket = Some(handle);
                     return Ok(());
@@ -50,7 +47,6 @@ impl DiscordIpc for DiscordIpcClient {
                 Err(_) => continue,
             }
         }
-
         Err(Error::IPCConnectionFailed)
     }
 
@@ -71,20 +67,13 @@ impl DiscordIpc for DiscordIpcClient {
     }
 
     fn close(&mut self) -> Result<()> {
-        // Send close frame — log but don't abort if it fails
+       
         if let Err(e) = self.send(json!({}), 2) {
-            eprintln!("Warning: failed to send close frame: {:?}", e);
+            eprintln!("Warning: failed to send IPC close frame: {:?}", e);
         }
 
         let socket = self.socket.take().ok_or(Error::NotConnected)?;
-
-        unsafe {
-            let handle = socket.as_raw_handle();
-            FlushFileBuffers(handle);
-            DisconnectNamedPipe(handle);
-        }
-
-        drop(socket);
+        drop(socket); 
         Ok(())
     }
 
